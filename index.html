@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Panel Rip — WeebCentral Downloader</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="scanline"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">巻</span>
+    <span class="brand-text">Panel<em>Rip</em></span>
+  </div>
+  <span class="tag">100% browser-side · nothing leaves your device except to WeebCentral</span>
+</header>
+
+<main class="wrap">
+
+  <section class="fetch-card">
+    <label for="mangaUrl" class="field-label">Manga URL</label>
+    <div class="input-row">
+      <input id="mangaUrl" type="text" placeholder="https://weebcentral.com/series/xxxxxxxx/Manga-Name" autocomplete="off">
+      <button id="fetchBtn" class="btn primary">Fetch</button>
+    </div>
+    <p id="fetchStatus" class="status"></p>
+
+    <button id="settingsToggle" class="settings-toggle" type="button">⚙ Advanced settings (CORS proxy)</button>
+    <div id="settingsPanel" class="settings-panel hidden">
+      <label for="customProxy" class="field-label">Your own CORS proxy (optional)</label>
+      <input id="customProxy" type="text" placeholder="https://your-proxy.example/?url={url}">
+      <p class="muted small">
+        Used before the public fallback proxies. Include <code>{url}</code> where the target URL should go,
+        or leave blank to just append it. Only needed if direct requests and the public proxies both fail —
+        see the README for why.
+      </p>
+    </div>
+  </section>
+
+  <section id="resultCard" class="result-card hidden">
+
+    <div class="manga-header">
+      <img id="coverImg" class="cover" alt="cover">
+      <div class="manga-meta">
+        <h1 id="mangaTitle">—</h1>
+        <p id="chapterCount" class="muted"></p>
+        <div class="select-row">
+          <button id="selectAllBtn" class="btn ghost small">Select all</button>
+          <button id="selectNoneBtn" class="btn ghost small">Select none</button>
+          <div class="range-input">
+            <input id="rangeField" type="text" placeholder="e.g. 1-10, 15, 20-25">
+            <button id="applyRangeBtn" class="btn ghost small">Apply range</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="chapterList" class="chapter-list"></div>
+
+    <div class="output-row">
+      <span class="field-label">Output</span>
+      <label class="check"><input type="checkbox" id="outZip" checked> ZIP</label>
+      <label class="check"><input type="checkbox" id="outPdf"> Merged PDF</label>
+    </div>
+
+    <button id="downloadBtn" class="btn primary full">Download selected chapters</button>
+    <button id="cancelBtn" class="btn ghost full hidden">Cancel</button>
+
+    <div id="progressWrap" class="progress-wrap hidden">
+      <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
+      <p id="progressLabel" class="status"></p>
+    </div>
+
+  </section>
+
+  <p id="globalLog" class="log"></p>
+
+</main>
+
+<footer class="footer">
+  Runs entirely in your browser. If direct fetches are CORS-blocked, public proxy fallbacks kick in
+  automatically. No guarantees on those — see the README, or set your own proxy in Advanced settings.
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
