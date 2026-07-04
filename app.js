@@ -157,6 +157,12 @@ customProxyEl.addEventListener('change', () => {
 // was causing hundreds of pointless retries (and log spam) during a big
 // chapter download: direct was being retried for every single image.
 let directBlocked = false;
+// When WeebCentral 429s us (we're going too fast through a shared proxy IP),
+// pause every in-flight/upcoming request together for a bit. Without this,
+// each of the 5 concurrent workers independently backs off ~500ms and they
+// all retry at basically the same moment, instantly re-triggering the same
+// rate limit.
+let cooldownUntil = 0;
 
 const PUBLIC_PROXIES = [
   { id: 'pub1', build: u => `https://corsproxy.io/?url=${encodeURIComponent(u)}` },
@@ -213,12 +219,14 @@ async function fetchResource(url, { binary = false, retries = 2, signal, extraHe
   const attempts = buildAttempts();
   let lastErr;
   for(const attempt of attempts){
-    // A CORS-blocked "direct" attempt will never succeed on retry — don't
-    // waste time/backoff on it. Only proxy tiers get real retries, since
-    // those failures (rate limits, transient network issues) can resolve.
     const attemptRetries = attempt.id === 'direct' ? 0 : retries;
     for(let tryNum = 0; tryNum <= attemptRetries; tryNum++){
       if(signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
+      // Respect any active shared cooldown before firing.
+      const wait = cooldownUntil - Date.now();
+      if(wait > 0) await sleep(wait + Math.random() * 200);
+
       try{
         const res = await fetch(attempt.build(url), {
           mode: 'cors',
@@ -226,7 +234,12 @@ async function fetchResource(url, { binary = false, retries = 2, signal, extraHe
           signal,
           headers: extraHeaders,
         });
-        if(!res.ok) throw new Error(`HTTP ${res.status}`);
+        if(!res.ok){
+          const err = new Error(`HTTP ${res.status}`);
+          err.status = res.status;
+          err.retryAfter = res.headers.get('retry-after');
+          throw err;
+        }
         const data = binary ? await res.blob() : await res.text();
         if(!binary && typeof data === 'string' && /Just a moment|Enable JavaScript and cookies|Checking your browser/i.test(data)){
           throw new Error('hit a Cloudflare challenge page');
@@ -246,10 +259,20 @@ async function fetchResource(url, { binary = false, retries = 2, signal, extraHe
             directBlocked = true;
             logEvent('warn', `Direct requests are CORS-blocked this session — switching to proxy for everything else.`);
           }
+        }else if(e.status === 429){
+          const cooldownMs = e.retryAfter ? parseFloat(e.retryAfter) * 1000 : 4000 + Math.random() * 2000;
+          const until = Date.now() + cooldownMs;
+          if(until > cooldownUntil){
+            cooldownUntil = until;
+            logEvent('warn', `Getting rate-limited (HTTP 429) — pausing all requests for ~${Math.round(cooldownMs / 1000)}s to cool down.`);
+          }
         }else{
           logEvent('warn', `${url.replace('https://weebcentral.com', '')} — ${attempt.label} failed: ${e.message}`);
         }
-        if(tryNum < attemptRetries) await sleep(500 * (tryNum + 1) + Math.random() * 300);
+        if(tryNum < attemptRetries){
+          const base = e.status === 429 ? 1500 : 500;
+          await sleep(base * (tryNum + 1) + Math.random() * 300);
+        }
       }
     }
   }
@@ -526,7 +549,7 @@ async function downloadAll(){
     const chapterImages = await runPool(selected, async (ch) => ({
       chapter: ch,
       images: await getChapterImages(ch, signal),
-    }), 3, signal);
+    }), 2, signal);
 
     if(signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
@@ -555,7 +578,7 @@ async function downloadAll(){
           logEvent('info', `Progress: ${done}/${totalImages} images downloaded`);
         }
         setProgress(Math.round((done / totalImages) * 88), `Downloading images… ${done}/${totalImages}`);
-      }, 5, signal);
+      }, 3, signal);
 
       chapterBlobs.forEach((blob, i) => {
         if(!blob) return;
