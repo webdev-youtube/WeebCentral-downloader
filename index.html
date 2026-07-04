@@ -93,10 +93,19 @@
     </div>
 
     <div class="disclosure">
-      <button id="logToggle" class="disclosure-toggle" type="button">
-        <span class="chev">▶</span> Advanced log <span id="logCount" class="muted"></span>
-      </button>
-      <div id="logPanel" class="log-panel hidden"></div>
+      <div class="log-toggle-row">
+        <button id="logToggle" class="disclosure-toggle" type="button">
+          <span class="chev">▶</span> Advanced log <span id="logCount" class="muted"></span>
+        </button>
+        <span id="pathBadge" class="path-badge hidden"></span>
+      </div>
+      <div id="logWrap" class="hidden">
+        <div class="log-actions">
+          <button id="copyLogBtn" class="btn-copy" type="button">Copy log</button>
+          <button id="clearLogBtn" class="btn-copy" type="button">Clear</button>
+        </div>
+        <div id="logPanel" class="log-panel"></div>
+      </div>
     </div>
   </section>
 
