@@ -27,8 +27,12 @@ const customProxyEl   = document.getElementById('customProxy');
 const helpToggle      = document.getElementById('helpToggle');
 const helpBody        = document.getElementById('helpBody');
 const logToggle       = document.getElementById('logToggle');
+const logWrap         = document.getElementById('logWrap');
 const logPanel        = document.getElementById('logPanel');
 const logCountEl      = document.getElementById('logCount');
+const pathBadge       = document.getElementById('pathBadge');
+const copyLogBtn      = document.getElementById('copyLogBtn');
+const clearLogBtn     = document.getElementById('clearLogBtn');
 
 // ---------- disclosures ----------
 function wireDisclosure(toggleBtn, bodyEl){
@@ -39,7 +43,16 @@ function wireDisclosure(toggleBtn, bodyEl){
   });
 }
 wireDisclosure(helpToggle, helpBody);
-wireDisclosure(logToggle, logPanel);
+wireDisclosure(logToggle, logWrap);
+
+copyLogBtn.addEventListener('click', () => {
+  const text = Array.from(logPanel.children).map(el => el.textContent).join('\n');
+  navigator.clipboard.writeText(text).then(() => {
+    copyLogBtn.textContent = 'Copied';
+    setTimeout(() => { copyLogBtn.textContent = 'Copy log'; }, 1200);
+  });
+});
+clearLogBtn.addEventListener('click', () => resetLog());
 
 // ---------- copy buttons ----------
 document.addEventListener('click', (e) => {
@@ -55,6 +68,7 @@ document.addEventListener('click', (e) => {
 });
 
 // ---------- structured log ----------
+const MAX_LOG_LINES = 300;
 let logLines = 0;
 function logEvent(level, msg){
   logLines++;
@@ -65,12 +79,18 @@ function logEvent(level, msg){
   row.innerHTML = `<span class="t mono">${time}</span><span>${escapeHtml(msg)}</span>`;
   if(logPanel.querySelector('.log-empty')) logPanel.innerHTML = '';
   logPanel.appendChild(row);
+  while(logPanel.children.length > MAX_LOG_LINES) logPanel.removeChild(logPanel.firstChild);
   logPanel.scrollTop = logPanel.scrollHeight;
 }
 function resetLog(){
   logLines = 0;
   logCountEl.textContent = '';
   logPanel.innerHTML = '<div class="log-empty">Nothing yet.</div>';
+}
+function setPathBadge(label){
+  if(!label || label === 'direct'){ pathBadge.classList.add('hidden'); return; }
+  pathBadge.textContent = `via ${label}`;
+  pathBadge.classList.remove('hidden');
 }
 
 // ---------- status line (with spinner / check / x) ----------
@@ -129,12 +149,15 @@ customProxyEl.addEventListener('change', () => {
 });
 
 // ---------- CORS-resilient fetch ----------
-// Order of attempts:
-// 1. Direct (works if WeebCentral ever allows CORS).
-// 2. Whichever path worked last time this session (saves round-trips).
-// 3. Your own proxy, if set.
-// 4. Public fallback proxies, in a shuffled order (so we don't hammer the
-//    same possibly-down one first every time), each retried with backoff.
+// A CORS block is deterministic — the exact same cross-origin request will
+// fail again and again, it's not a transient network blip. So: try direct
+// once per fetch-session (reset each time the user hits Fetch), and the
+// moment it fails, stop trying it for every subsequent request in that
+// session — go straight to whatever's already proven to work. This is what
+// was causing hundreds of pointless retries (and log spam) during a big
+// chapter download: direct was being retried for every single image.
+let directBlocked = false;
+
 const PUBLIC_PROXIES = [
   { id: 'pub1', build: u => `https://corsproxy.io/?url=${encodeURIComponent(u)}` },
   { id: 'pub2', build: u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}` },
@@ -151,7 +174,7 @@ function shuffled(arr){
 }
 
 function buildAttempts(){
-  const attempts = [{ id: 'direct', label: 'direct', build: u => u }];
+  const attempts = directBlocked ? [] : [{ id: 'direct', label: 'direct', build: u => u }];
 
   const lastWorking = localStorage.getItem(LS_LASTWORK_KEY);
 
@@ -162,14 +185,12 @@ function buildAttempts(){
     build: u => custom.includes('{url}') ? custom.replace('{url}', encodeURIComponent(u)) : custom + encodeURIComponent(u),
   } : null;
 
-  const publicAttempts = shuffled(PUBLIC_PROXIES).map((p, i) => ({
+  const publicAttempts = shuffled(PUBLIC_PROXIES).map(p => ({
     id: p.id, label: `public proxy (${p.id})`, build: p.build,
   }));
 
   let ordered = [...(customAttempt ? [customAttempt] : []), ...publicAttempts];
 
-  // If something worked last time, try it right after direct, before the
-  // shuffled order — it's already proven reachable this session.
   if(lastWorking){
     const idx = ordered.findIndex(a => a.id === lastWorking);
     if(idx > 0){
@@ -178,18 +199,25 @@ function buildAttempts(){
     }
   }
 
-  return [attempts[0], ...ordered];
+  return [...attempts, ...ordered];
 }
 
 // extraHeaders: WeebCentral's chapter-list and chapter-image endpoints are
 // AJAX partials — sending these hints matches how the site's own front-end
 // requests them and avoids getting a redirect/error page instead of the
 // fragment. Proxies may or may not forward them; harmless either way.
-async function fetchResource(url, { binary = false, retries = 2, signal, extraHeaders } = {}){
+// quiet: when true, only log failures, not the success line — used for the
+// bulk per-image downloads where a per-file log line is pure noise once a
+// working path is established (progress is reported separately instead).
+async function fetchResource(url, { binary = false, retries = 2, signal, extraHeaders, quiet = false } = {}){
   const attempts = buildAttempts();
   let lastErr;
   for(const attempt of attempts){
-    for(let tryNum = 0; tryNum <= retries; tryNum++){
+    // A CORS-blocked "direct" attempt will never succeed on retry — don't
+    // waste time/backoff on it. Only proxy tiers get real retries, since
+    // those failures (rate limits, transient network issues) can resolve.
+    const attemptRetries = attempt.id === 'direct' ? 0 : retries;
+    for(let tryNum = 0; tryNum <= attemptRetries; tryNum++){
       if(signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       try{
         const res = await fetch(attempt.build(url), {
@@ -204,14 +232,24 @@ async function fetchResource(url, { binary = false, retries = 2, signal, extraHe
           throw new Error('hit a Cloudflare challenge page');
         }
         if(binary && data.size === 0) throw new Error('empty response');
-        logEvent('ok', `${url.replace('https://weebcentral.com', '')} — ${attempt.label} ✓${tryNum ? ` (attempt ${tryNum + 1})` : ''}`);
-        if(attempt.id !== 'direct') localStorage.setItem(LS_LASTWORK_KEY, attempt.id);
+        if(!quiet) logEvent('ok', `${url.replace('https://weebcentral.com', '')} — ${attempt.label} ✓${tryNum ? ` (attempt ${tryNum + 1})` : ''}`);
+        if(attempt.id !== 'direct'){
+          localStorage.setItem(LS_LASTWORK_KEY, attempt.id);
+          setPathBadge(attempt.label);
+        }
         return { data, via: attempt.label };
       }catch(e){
         if(e.name === 'AbortError') throw e;
         lastErr = e;
-        logEvent('warn', `${url.replace('https://weebcentral.com', '')} — ${attempt.label} failed: ${e.message}`);
-        if(tryNum < retries) await sleep(500 * (tryNum + 1) + Math.random() * 300);
+        if(attempt.id === 'direct'){
+          if(!directBlocked){
+            directBlocked = true;
+            logEvent('warn', `Direct requests are CORS-blocked this session — switching to proxy for everything else.`);
+          }
+        }else{
+          logEvent('warn', `${url.replace('https://weebcentral.com', '')} — ${attempt.label} failed: ${e.message}`);
+        }
+        if(tryNum < attemptRetries) await sleep(500 * (tryNum + 1) + Math.random() * 300);
       }
     }
   }
@@ -300,6 +338,8 @@ async function loadManga(){
   const seriesUrl = raw.startsWith('http') ? raw : `https://${raw}`;
   fetchBtn.disabled = true;
   resetLog();
+  directBlocked = false;
+  pathBadge.classList.add('hidden');
   setStep(0);
   setStatus(fetchStatusEl, 'Fetching manga page…', 'busy');
 
@@ -332,7 +372,7 @@ async function loadManga(){
     setStatus(fetchStatusEl, `Failed: ${e.message}`, 'err');
     helpBody.classList.remove('hidden');
     helpToggle.classList.add('open');
-    logPanel.classList.remove('hidden');
+    logWrap.classList.remove('hidden');
     logToggle.classList.add('open');
   }finally{
     fetchBtn.disabled = false;
@@ -478,7 +518,7 @@ async function downloadAll(){
   downloadBtn.classList.add('hidden');
   cancelBtn.classList.remove('hidden');
   progressWrap.classList.remove('hidden');
-  logPanel.classList.remove('hidden');
+  logWrap.classList.remove('hidden');
   logToggle.classList.add('open');
   setProgress(0, `Reading image lists for ${selected.length} chapter(s)…`);
 
@@ -505,12 +545,15 @@ async function downloadAll(){
       await runPool(images, async (imgUrl, i) => {
         if(signal.aborted) return;
         try{
-          const { data: blob } = await fetchResource(imgUrl, { binary: true, retries: 2, signal });
+          const { data: blob } = await fetchResource(imgUrl, { binary: true, retries: 2, signal, quiet: true });
           chapterBlobs[i] = blob;
         }catch(e){
           if(e.name !== 'AbortError') logEvent('error', `Skipped an image in "${chapter.name}": ${e.message}`);
         }
         done++;
+        if(done % 25 === 0 || done === totalImages){
+          logEvent('info', `Progress: ${done}/${totalImages} images downloaded`);
+        }
         setProgress(Math.round((done / totalImages) * 88), `Downloading images… ${done}/${totalImages}`);
       }, 5, signal);
 
