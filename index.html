@@ -91,6 +91,13 @@
         <p style="margin-top:8px;">Leave this blank to just use the public fallback proxies.</p>
       </div>
     </div>
+
+    <div class="disclosure">
+      <button id="logToggle" class="disclosure-toggle" type="button">
+        <span class="chev">▶</span> Advanced log <span id="logCount" class="muted"></span>
+      </button>
+      <div id="logPanel" class="log-panel hidden"></div>
+    </div>
   </section>
 
   <section id="resultCard" class="card hidden">
@@ -126,13 +133,6 @@
     <div id="progressWrap" class="progress-wrap hidden">
       <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
       <p id="progressLabel" class="progress-label"></p>
-    </div>
-
-    <div class="disclosure">
-      <button id="logToggle" class="disclosure-toggle" type="button">
-        <span class="chev">▶</span> Advanced log <span id="logCount" class="muted"></span>
-      </button>
-      <div id="logPanel" class="log-panel hidden"></div>
     </div>
 
   </section>
